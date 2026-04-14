@@ -1,24 +1,24 @@
 // ==================== CONFIGURACIÓN SUPABASE ====================
 const SUPABASE_URL = 'https://ivxdxxkkorjtiwnxcdfn.supabase.co';
-const SUPABASE_ANON_KEY = 'postgresql://postgres:[YOUR-PASSWORD]@db.ivxdxxkkorjtiwnxcdfn.supabase.co:5432/postgres';
+const SUPABASE_ANON_KEY = 'sb_publishable_RxwqP19sQPRdjmk7iTEZYQ_ZvL9cTSo'; 
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let currentUser = null;
 let signaturePad = null;
 
-// ==================== LOGIN (usando tabla 'users' con texto plano) ====================
-// NOTA: En producción usa supabase.auth.signInWithPassword()
+// ==================== LOGIN (usando tabla 'users') ====================
 async function doLogin() {
     const username = document.getElementById('loginUser').value.trim();
     const password = document.getElementById('loginPass').value.trim();
     try {
+        // Buscar usuario por nombre
         const { data, error } = await supabase
             .from('users')
             .select('username, role, password_hash')
             .eq('username', username)
             .single();
         if (error || !data) throw new Error('Usuario no existe');
-        // Comparación simple (solo demo - en realidad usar bcrypt en el backend)
+        // Comparación simple (solo demo - en producción usar bcrypt o auth de Supabase)
         if (password !== '1234') throw new Error('Contraseña incorrecta');
         currentUser = { username: data.username, role: data.role };
         sessionStorage.setItem('servitec_session', JSON.stringify(currentUser));
@@ -33,48 +33,31 @@ async function doLogin() {
     }
 }
 
-// ==================== CRUD DE ÓRDENES ====================
+// ==================== CRUD ÓRDENES ====================
 async function getAllOrders() {
     const { data, error } = await supabase
         .from('service_orders')
         .select('*, clients(*)');
-    if (error) {
-        console.error(error);
-        return [];
+    if (error) return [];
+    // Cargar workers y productos para cada orden
+    for (let order of data) {
+        const { data: workersData } = await supabase
+            .from('order_workers')
+            .select('workers(name)')
+            .eq('order_id', order.id);
+        order.workers = workersData?.map(w => w.workers.name) || [];
+        const { data: productsData } = await supabase
+            .from('order_products')
+            .select('product_name as name, quantity, unit_price')
+            .eq('order_id', order.id);
+        order.products = productsData || [];
     }
-    // Transformar para que coincida con el formato esperado por el frontend
-    return data.map(order => ({
-        ...order,
-        client_name: order.clients?.name,
-        client_dni: order.clients?.dni,
-        client_phone: order.clients?.phone,
-        client_location: order.clients?.location,
-        workers: [],   // se cargarán aparte
-        products: []   // se cargarán aparte
-    }));
-}
-
-async function getWorkersForOrder(orderId) {
-    const { data, error } = await supabase
-        .from('order_workers')
-        .select('workers(name)')
-        .eq('order_id', orderId);
-    if (error) return [];
-    return data.map(item => item.workers.name);
-}
-
-async function getProductsForOrder(orderId) {
-    const { data, error } = await supabase
-        .from('order_products')
-        .select('product_name as name, quantity, unit_price')
-        .eq('order_id', orderId);
-    if (error) return [];
     return data;
 }
 
 async function saveOrder(orderData) {
-    // 1. Insertar en service_orders
-    const { data: order, error: orderError } = await supabase
+    // 1. Insertar orden
+    const { data: order, error } = await supabase
         .from('service_orders')
         .insert([{
             order_number: orderData.orderNumber,
@@ -90,11 +73,10 @@ async function saveOrder(orderData) {
         }])
         .select()
         .single();
-    if (orderError) throw orderError;
-
+    if (error) throw error;
     const orderId = order.id;
 
-    // 2. Insertar trabajadores en order_workers
+    // 2. Insertar trabajadores
     for (let workerName of orderData.workers) {
         const { data: worker } = await supabase
             .from('workers')
@@ -108,7 +90,7 @@ async function saveOrder(orderData) {
         }
     }
 
-    // 3. Insertar productos en order_products
+    // 3. Insertar productos
     for (let prod of orderData.products) {
         await supabase
             .from('order_products')
@@ -119,20 +101,14 @@ async function saveOrder(orderData) {
                 unit_price: prod.unit_price
             }]);
     }
-
     return order;
 }
 
 async function deleteOrder(orderId) {
-    // Eliminar en cascada (por FK) – primero se borra la orden, lo demás se borra automático
-    const { error } = await supabase
-        .from('service_orders')
-        .delete()
-        .eq('id', orderId);
-    if (error) throw error;
+    await supabase.from('service_orders').delete().eq('id', orderId);
 }
 
-// ==================== CRUD DE CLIENTES ====================
+// ==================== CRUD CLIENTES ====================
 async function getAllClients() {
     const { data, error } = await supabase.from('clients').select('*');
     if (error) return [];
@@ -140,59 +116,37 @@ async function getAllClients() {
 }
 
 async function addClient(client) {
-    const { data, error } = await supabase
-        .from('clients')
-        .insert([client])
-        .select()
-        .single();
+    const { error } = await supabase.from('clients').insert([client]);
     if (error) throw error;
-    return data;
 }
 
 async function deleteClient(clientId) {
-    const { error } = await supabase
-        .from('clients')
-        .delete()
-        .eq('id', clientId);
-    if (error) throw error;
+    await supabase.from('clients').delete().eq('id', clientId);
 }
 
-// ==================== CRUD DE TRABAJADORES ====================
+// ==================== CRUD TRABAJADORES ====================
 async function getAllWorkers() {
     const { data, error } = await supabase.from('workers').select('*');
     if (error) return [];
     return data;
 }
 
-async function addWorker(workerName) {
-    const { error } = await supabase
-        .from('workers')
-        .insert([{ name: workerName }]);
-    if (error) throw error;
+async function addWorker(name) {
+    await supabase.from('workers').insert([{ name }]);
 }
 
-async function deleteWorker(workerName) {
-    const { error } = await supabase
-        .from('workers')
-        .delete()
-        .eq('name', workerName);
-    if (error) throw error;
+async function deleteWorker(name) {
+    await supabase.from('workers').delete().eq('name', name);
 }
 
-// ==================== RENDERIZADO DE ÓRDENES (con workers y productos) ====================
+// ==================== RENDERIZADO DE ÓRDENES (igual que antes, pero usando las funciones nuevas) ====================
 async function renderOrders() {
     let orders = await getAllOrders();
-    // Cargar workers y productos para cada orden
-    for (let order of orders) {
-        order.workers = await getWorkersForOrder(order.id);
-        order.products = await getProductsForOrder(order.id);
-    }
-
     const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || '';
     if (searchTerm) {
-        orders = orders.filter(o => o.client_name?.toLowerCase().includes(searchTerm) ||
-            o.client_dni?.includes(searchTerm) ||
-            o.client_location?.toLowerCase().includes(searchTerm));
+        orders = orders.filter(o => o.clients?.name?.toLowerCase().includes(searchTerm) ||
+            o.clients?.dni?.includes(searchTerm) ||
+            o.clients?.location?.toLowerCase().includes(searchTerm));
     }
     const sortType = document.getElementById('sortSelect')?.value;
     if (sortType === 'recent') orders.sort((a, b) => new Date(b.start_datetime) - new Date(a.start_datetime));
@@ -210,7 +164,7 @@ async function renderOrders() {
         const statusColor = o.status === 'completed' ? 'bg-green-100 text-green-700' : (o.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700');
         html += `<div class="bg-white rounded-2xl shadow-sm p-4 border" data-id="${o.id}">
             <div class="flex justify-between items-start">
-                <div><span class="font-mono text-xs text-slate-400">#${o.order_number || o.id}</span><h3 class="font-bold">${escapeHtml(o.client_name)}</h3><p class="text-xs text-slate-500"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(o.client_location || '')} | ${escapeHtml(o.client_phone || '')}</p></div>
+                <div><span class="font-mono text-xs text-slate-400">#${o.order_number || o.id}</span><h3 class="font-bold">${escapeHtml(o.clients?.name)}</h3><p class="text-xs text-slate-500"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(o.clients?.location || '')} | ${escapeHtml(o.clients?.phone || '')}</p></div>
                 <span class="text-xs px-2 py-1 rounded-full ${statusColor}">${statusMap[o.status]}</span>
             </div>
             <div class="mt-2 text-sm"><i class="fas fa-tools"></i> ${escapeHtml(o.requested_service?.substring(0, 60))}</div>
@@ -228,17 +182,13 @@ async function showOrderDetailPdf(orderId) {
     const orders = await getAllOrders();
     let order = orders.find(o => o.id === orderId);
     if (!order) return;
-    // Cargar workers y productos específicos
-    order.workers = await getWorkersForOrder(orderId);
-    order.products = await getProductsForOrder(orderId);
-
     const modal = document.getElementById('pdfDetailModal');
     const content = document.getElementById('pdfContent');
     const productosHtml = order.products && order.products.length ?
         `<table class="w-full border-collapse text-xs"><thead><tr class="border-b"><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead><tbody>${order.products.map(p => `<tr><td>${escapeHtml(p.name)}</td><td>${p.quantity}</td><td>$${p.unit_price.toFixed(2)}</td><td>$${(p.quantity * p.unit_price).toFixed(2)}</td></tr>`).join('')}</tbody></table>`
         : '<p>No hay productos</p>';
     content.innerHTML = `<div class="border-b pb-3 mb-3"><h2 class="text-xl font-bold">ORDEN DE SERVICIO</h2><p>N° ${order.order_number} | ${new Date(order.created_at).toLocaleString()}</p></div>
-    <div class="grid grid-cols-2 gap-3"><div><b>Cliente:</b> ${escapeHtml(order.client_name)}<br><b>DNI:</b> ${order.client_dni}<br><b>Tel:</b> ${order.client_phone}<br><b>Ubicación:</b> ${escapeHtml(order.client_location)}</div><div><b>Técnicos:</b> ${order.workers?.join(', ')}<br><b>Inicio:</b> ${new Date(order.start_datetime).toLocaleString()}<br><b>Término:</b> ${new Date(order.end_datetime).toLocaleString()}</div></div>
+    <div class="grid grid-cols-2 gap-3"><div><b>Cliente:</b> ${escapeHtml(order.clients?.name)}<br><b>DNI:</b> ${order.clients?.dni}<br><b>Tel:</b> ${order.clients?.phone}<br><b>Ubicación:</b> ${escapeHtml(order.clients?.location)}</div><div><b>Técnicos:</b> ${order.workers?.join(', ')}<br><b>Inicio:</b> ${new Date(order.start_datetime).toLocaleString()}<br><b>Término:</b> ${new Date(order.end_datetime).toLocaleString()}</div></div>
     <div><b>Servicio solicitado:</b><br>${escapeHtml(order.requested_service)}</div><div><b>Trabajo realizado:</b><br>${escapeHtml(order.performed_work)}</div>
     <div><b>Productos:</b><br>${productosHtml}</div><div class="text-right font-bold text-lg">Total: $${order.total_amount?.toFixed(2)}</div>
     <div><b>Firma:</b><br><img src="${order.signature_base64}" class="border rounded max-h-28"></div>`;
@@ -247,37 +197,29 @@ async function showOrderDetailPdf(orderId) {
     document.getElementById('closePdfModal').onclick = () => modal.classList.add('hidden');
 }
 
-// ==================== PERFIL DE TRABAJADOR ====================
+// ==================== PERFIL DE TRABAJADOR (similar, usando getAllOrders) ====================
 async function showWorkerProfile(workerName) {
     const allOrders = await getAllOrders();
-    // Cargar workers para cada orden
-    for (let order of allOrders) {
-        order.workers = await getWorkersForOrder(order.id);
-    }
     let workerOrders = allOrders.filter(o => o.workers && o.workers.includes(workerName));
     workerOrders.sort((a, b) => new Date(b.start_datetime) - new Date(a.start_datetime));
-
     document.getElementById('profileWorkerName').innerText = workerName;
     const listContainer = document.getElementById('profileOrdersList');
     const statsDiv = document.getElementById('profileStats');
-
     function renderProfileOrders(ordersFiltered) {
         if (ordersFiltered.length === 0) {
             listContainer.innerHTML = '<p class="text-slate-400 text-center p-4">No hay órdenes asignadas a este técnico.</p>';
             statsDiv.innerHTML = '';
             return;
         }
-        let html = '';
-        let totalAmount = 0;
+        let html = '', total = 0;
         for (let o of ordersFiltered) {
-            totalAmount += o.total_amount || 0;
-            html += `<div class="border rounded-xl p-3 bg-slate-50"><div class="flex justify-between"><span class="font-bold">${escapeHtml(o.client_name)}</span><span class="text-xs">${new Date(o.start_datetime).toLocaleDateString()}</span></div><p class="text-sm">${escapeHtml(o.requested_service?.substring(0, 80))}</p><div class="flex justify-between mt-1 text-xs"><span>Estado: ${o.status === 'completed' ? '✅ Finalizado' : (o.status === 'in_progress' ? '🔵 En proceso' : '🟡 Pendiente')}</span><span class="font-semibold">$${o.total_amount?.toFixed(2)}</span></div><button class="text-indigo-600 text-xs mt-1 view-order-detail" data-id="${o.id}">Ver detalle</button></div>`;
+            total += o.total_amount || 0;
+            html += `<div class="border rounded-xl p-3 bg-slate-50"><div class="flex justify-between"><span class="font-bold">${escapeHtml(o.clients?.name)}</span><span class="text-xs">${new Date(o.start_datetime).toLocaleDateString()}</span></div><p class="text-sm">${escapeHtml(o.requested_service?.substring(0, 80))}</p><div class="flex justify-between mt-1 text-xs"><span>Estado: ${o.status === 'completed' ? '✅ Finalizado' : (o.status === 'in_progress' ? '🔵 En proceso' : '🟡 Pendiente')}</span><span class="font-semibold">$${o.total_amount?.toFixed(2)}</span></div><button class="text-indigo-600 text-xs mt-1 view-order-detail" data-id="${o.id}">Ver detalle</button></div>`;
         }
         listContainer.innerHTML = html;
-        statsDiv.innerHTML = `📊 Total de órdenes: ${ordersFiltered.length} | Suma total: $${totalAmount.toFixed(2)}`;
+        statsDiv.innerHTML = `📊 Total de órdenes: ${ordersFiltered.length} | Suma total: $${total.toFixed(2)}`;
         document.querySelectorAll('.view-order-detail').forEach(btn => btn.addEventListener('click', (e) => { showOrderDetailPdf(parseInt(btn.dataset.id)); }));
     }
-
     const startDateInput = document.getElementById('profileStartDate');
     const endDateInput = document.getElementById('profileEndDate');
     const applyFilter = () => {
@@ -285,7 +227,7 @@ async function showWorkerProfile(workerName) {
         const start = startDateInput.value ? new Date(startDateInput.value) : null;
         const end = endDateInput.value ? new Date(endDateInput.value) : null;
         if (start) filtered = filtered.filter(o => new Date(o.start_datetime) >= start);
-        if (end) { const endPlus = new Date(end); endPlus.setHours(23, 59, 59); filtered = filtered.filter(o => new Date(o.start_datetime) <= endPlus); }
+        if (end) { const endPlus = new Date(end); endPlus.setHours(23,59,59); filtered = filtered.filter(o => new Date(o.start_datetime) <= endPlus); }
         renderProfileOrders(filtered);
     };
     document.getElementById('applyProfileFilter').onclick = applyFilter;
@@ -294,28 +236,27 @@ async function showWorkerProfile(workerName) {
     document.getElementById('workerProfileModal').classList.remove('hidden');
 }
 
-// ==================== GESTIÓN DE TÉCNICOS (CON PERFILES) ====================
+// ==================== GESTIÓN DE TÉCNICOS Y CLIENTES (adaptadas) ====================
 async function openWorkersLibrary() {
     const modal = document.getElementById('workersModalLib');
     const listDiv = document.getElementById('workersListModal');
     const workers = await getAllWorkers();
     listDiv.innerHTML = workers.map(w => `<div class="flex justify-between items-center border-b py-2"><span>${escapeHtml(w.name)}</span><div><button class="view-profile-btn text-blue-600 text-xs mr-2" data-name="${escapeHtml(w.name)}"><i class="fas fa-id-card"></i> Ver perfil</button><button class="delete-worker-btn text-red-500 text-xs" data-name="${escapeHtml(w.name)}"><i class="fas fa-trash"></i></button></div></div>`).join('');
     document.querySelectorAll('.view-profile-btn').forEach(btn => btn.addEventListener('click', (e) => { modal.classList.add('hidden'); showWorkerProfile(btn.dataset.name); }));
-    document.querySelectorAll('.delete-worker-btn').forEach(btn => btn.addEventListener('click', async (e) => { const name = btn.dataset.name; await deleteWorker(name); await openWorkersLibrary(); await loadFormData(); }));
+    document.querySelectorAll('.delete-worker-btn').forEach(btn => btn.addEventListener('click', async (e) => { await deleteWorker(btn.dataset.name); await openWorkersLibrary(); await loadFormData(); }));
     modal.classList.remove('hidden');
 }
 
-// ==================== GESTIÓN DE CLIENTES ====================
 async function openClientsLibrary() {
     const modal = document.getElementById('clientsModalLib');
     const listDiv = document.getElementById('clientListModal');
     const clients = await getAllClients();
     listDiv.innerHTML = clients.map(c => `<div class="border-b py-2"><b>${escapeHtml(c.name)}</b> - DNI: ${c.dni}<br><span class="text-xs">${c.phone} | ${c.location}</span><button class="delete-client-btn float-right text-red-500 text-xs" data-id="${c.id}"><i class="fas fa-trash"></i></button></div>`).join('');
-    document.querySelectorAll('.delete-client-btn').forEach(btn => btn.addEventListener('click', async (e) => { const id = parseInt(btn.dataset.id); await deleteClient(id); await openClientsLibrary(); await loadFormData(); }));
+    document.querySelectorAll('.delete-client-btn').forEach(btn => btn.addEventListener('click', async (e) => { await deleteClient(parseInt(btn.dataset.id)); await openClientsLibrary(); await loadFormData(); }));
     modal.classList.remove('hidden');
 }
 
-// ==================== FORMULARIO NUEVA ORDEN ====================
+// ==================== FORMULARIO NUEVA ORDEN (casi igual, solo cambia el guardado) ====================
 async function loadFormData() {
     const clients = await getAllClients();
     const select = document.getElementById('clientSelect');
@@ -377,10 +318,6 @@ async function submitNewOrder() {
     const newOrder = {
         orderNumber: `ORD-${Date.now().toString().slice(-6)}`,
         client_id: parseInt(clientId),
-        client_name: clientObj.name,
-        client_dni: clientObj.dni,
-        client_phone: clientObj.phone,
-        client_location: clientObj.location,
         workers: selectedWorkers,
         requested_service: requested,
         performed_work: performed,
@@ -478,5 +415,4 @@ if (savedSession) {
     document.getElementById('loginContainer').classList.remove('hidden');
 }
 
-// Evento login
 document.getElementById('loginBtn')?.addEventListener('click', doLogin);
