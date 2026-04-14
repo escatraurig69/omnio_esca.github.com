@@ -1,159 +1,81 @@
-// ==================== EVITAR REDECLARACIÓN DE SUPABASE ====================//
-if (!window.supabaseClient) {
-    const SUPABASE_URL = 'https://ivxdxxkkorjtiwnxcdfn.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2eGR4eGtrb3JqdGl3bnhjZGZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxMTMyMTEsImV4cCI6MjA5MTY4OTIxMX0.B-nktdSeyVmvzE2Vp5VGvsaaHS2AGe1etJhIkY2nPhs';
-    window.supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-}
-const supabase = window.supabaseClient;
+// ==================== OFFLINE-FIRST CON INDEXEDDB ====================
+const DB_NAME = 'omnio_offline_db';
+const DB_VERSION = 1;
+let dbPromise;
 let currentUser = null;
 let signaturePad = null;
 
-// ==================== LOGIN con email/contraseña (Supabase Auth) ====================//
+// Inicializar IndexedDB
+async function initDB() {
+    const idbLib = window.idb;
+    dbPromise = idbLib.openDB(DB_NAME, DB_VERSION, {
+        upgrade(db, oldVersion, newVersion, transaction) {
+            if (!db.objectStoreNames.contains('orders')) {
+                const orderStore = db.createObjectStore('orders', { keyPath: 'id' });
+                orderStore.createIndex('by_date', 'created_at');
+            }
+            if (!db.objectStoreNames.contains('clients')) db.createObjectStore('clients', { keyPath: 'id' });
+            if (!db.objectStoreNames.contains('workers')) db.createObjectStore('workers', { keyPath: 'name' });
+        }
+    });
+    return dbPromise;
+}
+
+// Datos iniciales
+async function seedData() {
+    const db = await dbPromise;
+    const workers = await db.getAll('workers');
+    if (workers.length === 0) {
+        await db.add('workers', { name: 'Mauro' });
+        await db.add('workers', { name: 'Alejo' });
+        await db.add('workers', { name: 'Carla' });
+    }
+    const clients = await db.getAll('clients');
+    if (clients.length === 0) {
+        await db.add('clients', { id: 1, name: 'Empresa ABC', dni: '20123456789', phone: '555-1234', location: 'Av. Central 123' });
+        await db.add('clients', { id: 2, name: 'Cliente XYZ', dni: '30987654', phone: '555-9876', location: 'Calle 2' });
+    }
+}
+
+// CRUD
+async function getAllClients() { const db = await dbPromise; return await db.getAll('clients'); }
+async function getAllWorkers() { const db = await dbPromise; return await db.getAll('workers'); }
+async function getAllOrders() { const db = await dbPromise; return await db.getAll('orders'); }
+async function saveOrder(order) { const db = await dbPromise; await db.put('orders', order); }
+async function deleteOrder(orderId) { const db = await dbPromise; await db.delete('orders', orderId); }
+async function addClient(client) { const db = await dbPromise; await db.add('clients', client); }
+async function deleteClient(clientId) { const db = await dbPromise; await db.delete('clients', clientId); }
+async function addWorker(name) { const db = await dbPromise; await db.add('workers', { name }); }
+async function deleteWorker(name) { const db = await dbPromise; await db.delete('workers', name); }
+
+// Login local (simulado)
 async function doLogin() {
     const username = document.getElementById('loginUser').value.trim();
     const password = document.getElementById('loginPass').value.trim();
-    const email = username + '@ejemplo.com';
-    try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email: email,
-            password: password
-        });
-        if (error) throw error;
-
-        const { data: profile, error: profileError } = await supabase
-            .from('user_profiles')
-            .select('role')
-            .eq('email', email)
-            .single();
-        if (profileError && profileError.code !== 'PGRST116') throw profileError;
-
-        currentUser = {
-            username: username,
-            email: email,
-            role: profile?.role || 'employee'
-        };
-        sessionStorage.setItem('servitec_session', JSON.stringify(currentUser));
+    const validUsers = { jefe: '1234', empleado: '1234' };
+    if (validUsers[username] && validUsers[username] === password) {
+        currentUser = { username, role: username === 'jefe' ? 'boss' : 'employee' };
+        sessionStorage.setItem('omnio_session', JSON.stringify(currentUser));
         document.getElementById('loginContainer').classList.add('hidden');
         document.getElementById('appContainer').classList.remove('hidden');
-        document.getElementById('userBadge').innerHTML = `<i class="fas fa-user"></i> ${currentUser.username} (${currentUser.role})`;
+        document.getElementById('userBadge').innerHTML = `<i class="fas fa-user"></i> ${currentUser.username}`;
         await loadInitialData();
-    } catch (err) {
-        document.getElementById('loginError').innerText = err.message;
-        document.getElementById('loginError').classList.remove('hidden');
-        setTimeout(() => document.getElementById('loginError').classList.add('hidden'), 3000);
+    } else {
+        const errDiv = document.getElementById('loginError');
+        errDiv.innerText = 'Credenciales inválidas';
+        errDiv.classList.remove('hidden');
+        setTimeout(() => errDiv.classList.add('hidden'), 2000);
     }
 }
 
-// ==================== CRUD ÓRDENES ====================
-async function getAllOrders() {
-    const { data, error } = await supabase
-        .from('service_orders')
-        .select('*, clients(*)');
-    if (error) return [];
-    for (let order of data) {
-        const { data: workersData } = await supabase
-            .from('order_workers')
-            .select('workers(name)')
-            .eq('order_id', order.id);
-        order.workers = workersData?.map(w => w.workers.name) || [];
-        const { data: productsData } = await supabase
-            .from('order_products')
-            .select('product_name as name, quantity, unit_price')
-            .eq('order_id', order.id);
-        order.products = productsData || [];
-    }
-    return data;
-}
-
-async function saveOrder(orderData) {
-    const { data: order, error } = await supabase
-        .from('service_orders')
-        .insert([{
-            order_number: orderData.orderNumber,
-            client_id: orderData.client_id,
-            requested_service: orderData.requested_service,
-            performed_work: orderData.performed_work,
-            start_datetime: orderData.start_datetime,
-            end_datetime: orderData.end_datetime,
-            status: orderData.status,
-            total_amount: orderData.total_amount,
-            signature_base64: orderData.signature,
-            created_at: orderData.created_at
-        }])
-        .select()
-        .single();
-    if (error) throw error;
-    const orderId = order.id;
-
-    for (let workerName of orderData.workers) {
-        const { data: worker } = await supabase
-            .from('workers')
-            .select('id')
-            .eq('name', workerName)
-            .single();
-        if (worker) {
-            await supabase
-                .from('order_workers')
-                .insert([{ order_id: orderId, worker_id: worker.id }]);
-        }
-    }
-
-    for (let prod of orderData.products) {
-        await supabase
-            .from('order_products')
-            .insert([{
-                order_id: orderId,
-                product_name: prod.name,
-                quantity: prod.quantity,
-                unit_price: prod.unit_price
-            }]);
-    }
-    return order;
-}
-
-async function deleteOrder(orderId) {
-    await supabase.from('service_orders').delete().eq('id', orderId);
-}
-
-// ==================== CRUD CLIENTES ====================
-async function getAllClients() {
-    const { data, error } = await supabase.from('clients').select('*');
-    if (error) return [];
-    return data;
-}
-
-async function addClient(client) {
-    const { error } = await supabase.from('clients').insert([client]);
-    if (error) throw error;
-}
-
-async function deleteClient(clientId) {
-    await supabase.from('clients').delete().eq('id', clientId);
-}
-
-// ==================== CRUD TRABAJADORES ====================
-async function getAllWorkers() {
-    const { data, error } = await supabase.from('workers').select('*');
-    if (error) return [];
-    return data;
-}
-
-async function addWorker(name) {
-    await supabase.from('workers').insert([{ name }]);
-}
-
-async function deleteWorker(name) {
-    await supabase.from('workers').delete().eq('name', name);
-}
-
-// ==================== RENDERIZADO DE ÓRDENES ====================
+// Renderizar órdenes
 async function renderOrders() {
     let orders = await getAllOrders();
     const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || '';
     if (searchTerm) {
-        orders = orders.filter(o => o.clients?.name?.toLowerCase().includes(searchTerm) ||
-            o.clients?.dni?.includes(searchTerm) ||
-            o.clients?.location?.toLowerCase().includes(searchTerm));
+        orders = orders.filter(o => o.client_name?.toLowerCase().includes(searchTerm) ||
+            o.client_dni?.includes(searchTerm) ||
+            o.client_location?.toLowerCase().includes(searchTerm));
     }
     const sortType = document.getElementById('sortSelect')?.value;
     if (sortType === 'recent') orders.sort((a, b) => new Date(b.start_datetime) - new Date(a.start_datetime));
@@ -171,7 +93,7 @@ async function renderOrders() {
         const statusColor = o.status === 'completed' ? 'bg-green-100 text-green-700' : (o.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700');
         html += `<div class="bg-white rounded-2xl shadow-sm p-4 border" data-id="${o.id}">
             <div class="flex justify-between items-start">
-                <div><span class="font-mono text-xs text-slate-400">#${o.order_number || o.id}</span><h3 class="font-bold">${escapeHtml(o.clients?.name)}</h3><p class="text-xs text-slate-500"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(o.clients?.location || '')} | ${escapeHtml(o.clients?.phone || '')}</p></div>
+                <div><span class="font-mono text-xs text-slate-400">#${o.orderNumber || o.id}</span><h3 class="font-bold">${escapeHtml(o.client_name)}</h3><p class="text-xs text-slate-500"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(o.client_location || '')} | ${escapeHtml(o.client_phone || '')}</p></div>
                 <span class="text-xs px-2 py-1 rounded-full ${statusColor}">${statusMap[o.status]}</span>
             </div>
             <div class="mt-2 text-sm"><i class="fas fa-tools"></i> ${escapeHtml(o.requested_service?.substring(0, 60))}</div>
@@ -180,70 +102,65 @@ async function renderOrders() {
         </div>`;
     }
     container.innerHTML = html;
-    document.querySelectorAll('.view-order-btn').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); showOrderDetailPdf(parseInt(btn.dataset.id)); }));
+    document.querySelectorAll('.view-order-btn').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); showOrderDetail(parseInt(btn.dataset.id)); }));
     document.querySelectorAll('.delete-order-btn').forEach(btn => btn.addEventListener('click', async (e) => { e.stopPropagation(); if (confirm('¿Eliminar orden?')) { await deleteOrder(parseInt(btn.dataset.id)); await renderOrders(); } }));
 }
 
-// ==================== DETALLE ORDEN (MODAL PDF) ====================
-async function showOrderDetailPdf(orderId) {
+// Detalle orden (PDF)
+async function showOrderDetail(orderId) {
     const orders = await getAllOrders();
-    let order = orders.find(o => o.id === orderId);
+    const order = orders.find(o => o.id === orderId);
     if (!order) return;
     const modal = document.getElementById('pdfDetailModal');
     const content = document.getElementById('pdfContent');
     const productosHtml = order.products && order.products.length ?
         `<table class="w-full border-collapse text-xs"><thead><tr class="border-b"><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead><tbody>${order.products.map(p => `<tr><td class="px-1">${escapeHtml(p.name)}</td><td class="px-1">${p.quantity}</td><td class="px-1">$${p.unit_price.toFixed(2)}</td><td class="px-1">$${(p.quantity * p.unit_price).toFixed(2)}</td></tr>`).join('')}</tbody></table>`
         : '<p>No hay productos</p>';
-    content.innerHTML = `<div class="border-b pb-3 mb-3"><h2 class="text-xl font-bold">ORDEN DE SERVICIO</h2><p>N° ${order.order_number} | ${new Date(order.created_at).toLocaleString()}</p></div>
-    <div class="grid grid-cols-2 gap-3"><div><b>Cliente:</b> ${escapeHtml(order.clients?.name)}<br><b>DNI:</b> ${order.clients?.dni}<br><b>Tel:</b> ${order.clients?.phone}<br><b>Ubicación:</b> ${escapeHtml(order.clients?.location)}</div><div><b>Técnicos:</b> ${order.workers?.join(', ')}<br><b>Inicio:</b> ${new Date(order.start_datetime).toLocaleString()}<br><b>Término:</b> ${new Date(order.end_datetime).toLocaleString()}</div></div>
+    content.innerHTML = `<div class="border-b pb-3 mb-3"><h2 class="text-xl font-bold">ORDEN DE SERVICIO</h2><p>N° ${order.orderNumber} | ${new Date(order.created_at).toLocaleString()}</p></div>
+    <div class="grid grid-cols-2 gap-3"><div><b>Cliente:</b> ${escapeHtml(order.client_name)}<br><b>DNI:</b> ${order.client_dni}<br><b>Tel:</b> ${order.client_phone}<br><b>Ubicación:</b> ${escapeHtml(order.client_location)}</div><div><b>Técnicos:</b> ${order.workers?.join(', ')}<br><b>Inicio:</b> ${new Date(order.start_datetime).toLocaleString()}<br><b>Término:</b> ${new Date(order.end_datetime).toLocaleString()}</div></div>
     <div><b>Servicio solicitado:</b><br>${escapeHtml(order.requested_service)}</div><div><b>Trabajo realizado:</b><br>${escapeHtml(order.performed_work)}</div>
     <div><b>Productos:</b><br>${productosHtml}</div><div class="text-right font-bold text-lg">Total: $${order.total_amount?.toFixed(2)}</div>
-    <div><b>Firma:</b><br><img src="${order.signature_base64}" class="border rounded max-h-28"></div>`;
+    <div><b>Firma:</b><br><img src="${order.signature}" class="border rounded max-h-28"></div>`;
     modal.classList.remove('hidden');
     document.getElementById('printPdfBtn').onclick = () => window.print();
     document.getElementById('closePdfModal').onclick = () => modal.classList.add('hidden');
 }
 
-// ==================== PERFIL DE TRABAJADOR ====================
+// Perfil de trabajador
 async function showWorkerProfile(workerName) {
-    const allOrders = await getAllOrders();
-    let workerOrders = allOrders.filter(o => o.workers && o.workers.includes(workerName));
+    const orders = await getAllOrders();
+    let workerOrders = orders.filter(o => o.workers && o.workers.includes(workerName));
     workerOrders.sort((a, b) => new Date(b.start_datetime) - new Date(a.start_datetime));
     document.getElementById('profileWorkerName').innerText = workerName;
     const listContainer = document.getElementById('profileOrdersList');
     const statsDiv = document.getElementById('profileStats');
     function renderProfileOrders(ordersFiltered) {
-        if (ordersFiltered.length === 0) {
-            listContainer.innerHTML = '<p class="text-slate-400 text-center p-4">No hay órdenes asignadas a este técnico.</p>';
-            statsDiv.innerHTML = '';
-            return;
-        }
+        if (ordersFiltered.length === 0) { listContainer.innerHTML = '<p class="text-slate-400 text-center p-4">No hay órdenes asignadas.</p>'; statsDiv.innerHTML = ''; return; }
         let html = '', total = 0;
         for (let o of ordersFiltered) {
             total += o.total_amount || 0;
-            html += `<div class="border rounded-xl p-3 bg-slate-50"><div class="flex justify-between"><span class="font-bold">${escapeHtml(o.clients?.name)}</span><span class="text-xs">${new Date(o.start_datetime).toLocaleDateString()}</span></div><p class="text-sm">${escapeHtml(o.requested_service?.substring(0, 80))}</p><div class="flex justify-between mt-1 text-xs"><span>Estado: ${o.status === 'completed' ? '✅ Finalizado' : (o.status === 'in_progress' ? '🔵 En proceso' : '🟡 Pendiente')}</span><span class="font-semibold">$${o.total_amount?.toFixed(2)}</span></div><button class="text-indigo-600 text-xs mt-1 view-order-detail" data-id="${o.id}">Ver detalle</button></div>`;
+            html += `<div class="border rounded-xl p-3 bg-slate-50"><div class="flex justify-between"><span class="font-bold">${escapeHtml(o.client_name)}</span><span class="text-xs">${new Date(o.start_datetime).toLocaleDateString()}</span></div><p class="text-sm">${escapeHtml(o.requested_service?.substring(0, 80))}</p><div class="flex justify-between mt-1 text-xs"><span>Estado: ${o.status === 'completed' ? '✅ Finalizado' : (o.status === 'in_progress' ? '🔵 En proceso' : '🟡 Pendiente')}</span><span class="font-semibold">$${o.total_amount?.toFixed(2)}</span></div><button class="text-indigo-600 text-xs mt-1 view-order-detail" data-id="${o.id}">Ver detalle</button></div>`;
         }
         listContainer.innerHTML = html;
-        statsDiv.innerHTML = `📊 Total de órdenes: ${ordersFiltered.length} | Suma total: $${total.toFixed(2)}`;
-        document.querySelectorAll('.view-order-detail').forEach(btn => btn.addEventListener('click', (e) => { showOrderDetailPdf(parseInt(btn.dataset.id)); }));
+        statsDiv.innerHTML = `📊 Total: ${ordersFiltered.length} | Suma: $${total.toFixed(2)}`;
+        document.querySelectorAll('.view-order-detail').forEach(btn => btn.addEventListener('click', (e) => { showOrderDetail(parseInt(btn.dataset.id)); }));
     }
-    const startDateInput = document.getElementById('profileStartDate');
-    const endDateInput = document.getElementById('profileEndDate');
-    const applyFilter = () => {
+    const startDate = document.getElementById('profileStartDate'), endDate = document.getElementById('profileEndDate');
+    const apply = () => {
         let filtered = [...workerOrders];
-        const start = startDateInput.value ? new Date(startDateInput.value) : null;
-        const end = endDateInput.value ? new Date(endDateInput.value) : null;
+        const start = startDate.value ? new Date(startDate.value) : null;
+        const end = endDate.value ? new Date(endDate.value) : null;
         if (start) filtered = filtered.filter(o => new Date(o.start_datetime) >= start);
-        if (end) { const endPlus = new Date(end); endPlus.setHours(23,59,59); filtered = filtered.filter(o => new Date(o.start_datetime) <= endPlus); }
+        if (end) { const e = new Date(end); e.setHours(23,59,59); filtered = filtered.filter(o => new Date(o.start_datetime) <= e); }
         renderProfileOrders(filtered);
     };
-    document.getElementById('applyProfileFilter').onclick = applyFilter;
-    document.getElementById('clearProfileFilter').onclick = () => { startDateInput.value = ''; endDateInput.value = ''; renderProfileOrders(workerOrders); };
+    document.getElementById('applyProfileFilter').onclick = apply;
+    document.getElementById('clearProfileFilter').onclick = () => { startDate.value = ''; endDate.value = ''; renderProfileOrders(workerOrders); };
     renderProfileOrders(workerOrders);
     document.getElementById('workerProfileModal').classList.remove('hidden');
 }
 
-// ==================== GESTIÓN DE TÉCNICOS Y CLIENTES ====================
+// Gestión de bibliotecas
 async function openWorkersLibrary() {
     const modal = document.getElementById('workersModalLib');
     const listDiv = document.getElementById('workersListModal');
@@ -253,7 +170,6 @@ async function openWorkersLibrary() {
     document.querySelectorAll('.delete-worker-btn').forEach(btn => btn.addEventListener('click', async (e) => { await deleteWorker(btn.dataset.name); await openWorkersLibrary(); await loadFormData(); }));
     modal.classList.remove('hidden');
 }
-
 async function openClientsLibrary() {
     const modal = document.getElementById('clientsModalLib');
     const listDiv = document.getElementById('clientListModal');
@@ -263,7 +179,7 @@ async function openClientsLibrary() {
     modal.classList.remove('hidden');
 }
 
-// ==================== FORMULARIO NUEVA ORDEN ====================
+// Formulario nueva orden
 async function loadFormData() {
     const clients = await getAllClients();
     const select = document.getElementById('clientSelect');
@@ -275,7 +191,6 @@ async function loadFormData() {
     workers.forEach(w => { container.innerHTML += `<label class="flex items-center gap-2 text-sm"><input type="checkbox" value="${escapeHtml(w.name)}" class="worker-check"> ${escapeHtml(w.name)}</label>`; });
     if (document.getElementById('productsContainer').children.length === 0) addProductRow();
 }
-
 function addProductRow(name = '', qty = 1, price = 0) {
     const div = document.createElement('div');
     div.className = 'flex flex-wrap gap-2 items-center bg-slate-50 p-2 rounded-lg';
@@ -287,14 +202,12 @@ function addProductRow(name = '', qty = 1, price = 0) {
     update();
     document.getElementById('productsContainer').appendChild(div);
 }
-
 function updateTotalMaterials() {
     let total = 0;
     document.querySelectorAll('#productsContainer .product-subtotal').forEach(sp => { total += parseFloat(sp.innerText.replace('$', '')) || 0; });
     document.getElementById('totalMaterialsSpan').innerText = `$${total.toFixed(2)}`;
     return total;
 }
-
 function getProductsArray() {
     const items = [];
     document.querySelectorAll('#productsContainer > div').forEach(row => {
@@ -306,7 +219,6 @@ function getProductsArray() {
     });
     return items;
 }
-
 async function submitNewOrder() {
     const clientId = document.getElementById('clientSelect').value;
     if (!clientId) { alert('Seleccione cliente'); return; }
@@ -323,8 +235,13 @@ async function submitNewOrder() {
     const products = getProductsArray();
     const totalMat = products.reduce((a, b) => a + b.subtotal, 0);
     const newOrder = {
+        id: Date.now(),
         orderNumber: `ORD-${Date.now().toString().slice(-6)}`,
         client_id: parseInt(clientId),
+        client_name: clientObj.name,
+        client_dni: clientObj.dni,
+        client_phone: clientObj.phone,
+        client_location: clientObj.location,
         workers: selectedWorkers,
         requested_service: requested,
         performed_work: performed,
@@ -340,9 +257,8 @@ async function submitNewOrder() {
     document.getElementById('orderModal').classList.add('hidden');
     await renderOrders();
     resetFormModal();
-    alert('Orden guardada en Supabase');
+    alert('Orden guardada localmente');
 }
-
 function resetFormModal() {
     document.getElementById('requestedService').value = '';
     document.getElementById('performedWork').value = '';
@@ -353,7 +269,6 @@ function resetFormModal() {
     document.getElementById('clientSelect').value = '';
     setDefaultDates();
 }
-
 function setDefaultDates() {
     const now = new Date();
     const start = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -362,13 +277,12 @@ function setDefaultDates() {
     document.getElementById('endDatetime').value = end;
 }
 
-// ==================== INICIALIZACIÓN ====================
+// Inicialización
 async function loadInitialData() {
     await loadFormData();
     await renderOrders();
     setDefaultDates();
 }
-
 function initEventListeners() {
     document.getElementById('newOrderFab')?.addEventListener('click', () => { document.getElementById('orderModal').classList.remove('hidden'); loadFormData(); setDefaultDates(); });
     document.getElementById('closeModalBtn')?.addEventListener('click', () => document.getElementById('orderModal').classList.add('hidden'));
@@ -402,17 +316,18 @@ function initEventListeners() {
     document.getElementById('closeWorkersModalLib')?.addEventListener('click', () => document.getElementById('workersModalLib').classList.add('hidden'));
     document.getElementById('closeProfileModal')?.addEventListener('click', () => document.getElementById('workerProfileModal').classList.add('hidden'));
 }
-
 function escapeHtml(str) { if (!str) return ''; return str.replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m])); }
 
-// Inicialización automática si hay sesión guardada
-const savedSession = sessionStorage.getItem('servitec_session');
+// Arranque
+const savedSession = sessionStorage.getItem('omnio_session');
 if (savedSession) {
     currentUser = JSON.parse(savedSession);
     document.getElementById('loginContainer').classList.add('hidden');
     document.getElementById('appContainer').classList.remove('hidden');
-    document.getElementById('userBadge').innerHTML = `<i class="fas fa-user"></i> ${currentUser.username} (${currentUser.role})`;
+    document.getElementById('userBadge').innerHTML = `<i class="fas fa-user"></i> ${currentUser.username}`;
     (async () => {
+        await initDB();
+        await seedData();
         const canvasElem = document.getElementById('signatureCanvas');
         signaturePad = new SignaturePad(canvasElem, { backgroundColor: 'white' });
         await loadInitialData();
@@ -421,5 +336,4 @@ if (savedSession) {
 } else {
     document.getElementById('loginContainer').classList.remove('hidden');
 }
-
 document.getElementById('loginBtn')?.addEventListener('click', doLogin);
