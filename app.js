@@ -1,4 +1,4 @@
-// ==================== EVITAR REDECLARACIÓN DE SUPABASE ====================
+// ==================== EVITAR REDECLARACIÓN DE SUPABASE ====================//
 if (!window.supabaseClient) {
     const SUPABASE_URL = 'https://ivxdxxkkorjtiwnxcdfn.supabase.co';
     const SUPABASE_ANON_KEY = 'sb_publishable_RxwqP19sQPRdjmk7iTEZYQ_ZvL9cTSo';
@@ -8,7 +8,7 @@ const supabase = window.supabaseClient;
 let currentUser = null;
 let signaturePad = null;
 
-// ==================== LOGIN con email/contraseña (Supabase Auth) ====================
+// ==================== LOGIN con email/contraseña (Supabase Auth) ====================//
 async function doLogin() {
     const username = document.getElementById('loginUser').value.trim();
     const password = document.getElementById('loginPass').value.trim();
