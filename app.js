@@ -28,15 +28,11 @@ async function seedData() {
     const db = await dbPromise;
     const workers = await db.getAll('workers');
     if (workers.length === 0) {
-        await db.add('workers', { name: 'Mauro' });
         await db.add('workers', { name: 'Alejo' });
-        await db.add('workers', { name: 'Carla' });
     }
     const clients = await db.getAll('clients');
     if (clients.length === 0) {
-        await db.add('clients', { id: 1, name: 'Empresa ABC', dni: '20123456789', phone: '555-1234', location: 'Av. Central 123' });
-        await db.add('clients', { id: 2, name: 'Cliente XYZ', dni: '30987654', phone: '555-9876', location: 'Calle 2' });
-    }
+      }
 }
 
 // ==================== CRUD Y SINCRONIZACIÓN ====================
