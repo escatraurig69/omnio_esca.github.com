@@ -4,12 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Omnio - Órdenes de servicio</title>
-    <!-- Tailwind + Font Awesome + Signature Pad + IDB -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="styles.css">
-    <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/idb@8.0.0/build/umd.js"></script>
+    <style>
+        * { font-family: 'Inter', sans-serif; }
+        body { background: #f4f7fc; }
+        .signature-canvas { border: 2px dashed #cbd5e1; border-radius: 1rem; background: white; touch-action: none; width: 100%; height: 140px; }
+        .pdf-modal { max-width: 800px; background: white; border-radius: 1.5rem; box-shadow: 0 20px 35px -10px rgba(0,0,0,0.3); }
+        @media print { body * { visibility: hidden; } .print-area, .print-area * { visibility: visible; } .print-area { position: absolute; top: 0; left: 0; width: 100%; } .no-print { display: none; } }
+        .card-order { transition: all 0.2s; }
+        .card-order:active { transform: scale(0.99); }
+        .nav-btn.active { background: #f59e0b20; color: #d97706; border-bottom: 2px solid #f59e0b; }
+    </style>
 </head>
 <body class="pb-20">
 
@@ -31,10 +37,7 @@
     <!-- MAIN APP -->
     <div id="appContainer" class="hidden max-w-5xl mx-auto px-4 py-4">
         <div class="flex flex-wrap justify-between items-center mb-4 gap-2">
-            <div>
-                <h1 class="text-2xl font-bold text-slate-800"><i class="fas fa-hard-hat text-amber-600"></i> Omnio</h1>
-                <span id="syncStatus" class="text-xs">🟢 Sincronizado</span>
-            </div>
+            <div><h1 class="text-2xl font-bold text-slate-800"><i class="fas fa-hard-hat text-amber-600"></i> Omnio</h1><span id="syncStatus" class="text-xs">📴 Offline - datos locales</span></div>
             <div class="flex gap-2">
                 <button id="manageClientsBtn" class="bg-white border px-3 py-1 rounded-full text-sm"><i class="fas fa-address-book"></i> Clientes</button>
                 <button id="manageWorkersBtn" class="bg-white border px-3 py-1 rounded-full text-sm"><i class="fas fa-users"></i> Técnicos</button>
@@ -45,74 +48,38 @@
 
         <!-- Buscador y ordenamiento -->
         <div class="bg-white rounded-2xl shadow-sm p-3 mb-4 flex flex-wrap gap-2 items-center">
-            <div class="flex-1 relative">
-                <i class="fas fa-search absolute left-3 top-3 text-slate-400"></i>
-                <input type="text" id="searchInput" placeholder="Buscar por cliente, DNI o ubicación..." class="w-full pl-9 pr-3 py-2 border rounded-xl">
-            </div>
-            <select id="sortSelect" class="border rounded-xl px-3 py-2 text-sm bg-white">
-                <option value="recent">📅 Más reciente</option>
-                <option value="oldest">📅 Más antiguo</option>
-            </select>
+            <div class="flex-1 relative"><i class="fas fa-search absolute left-3 top-3 text-slate-400"></i><input type="text" id="searchInput" placeholder="Buscar por cliente, DNI o ubicación..." class="w-full pl-9 pr-3 py-2 border rounded-xl"></div>
+            <select id="sortSelect" class="border rounded-xl px-3 py-2 text-sm bg-white"><option value="recent">📅 Más reciente</option><option value="oldest">📅 Más antiguo</option></select>
             <button id="newOrderFab" class="bg-amber-500 text-white px-4 py-2 rounded-xl shadow-md"><i class="fas fa-plus"></i> Nueva orden</button>
         </div>
 
-        <!-- Lista de órdenes -->
         <div id="ordersList" class="space-y-3 mb-20"></div>
 
-        <!-- Navegación inferior simplificada -->
         <div class="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around py-2 shadow-lg z-10 max-w-5xl mx-auto">
             <button class="nav-btn active" data-view="orders"><i class="fas fa-clipboard-list text-xl"></i><span class="text-xs block">Órdenes</span></button>
-            <button class="nav-btn" data-view="sync"><i class="fas fa-cloud-upload-alt text-xl"></i><span class="text-xs block">Sincronizar</span></button>
+            <button class="nav-btn" data-view="sync"><i class="fas fa-database text-xl"></i><span class="text-xs block">Almacén local</span></button>
         </div>
     </div>
 
     <!-- MODAL NUEVA ORDEN -->
     <div id="orderModal" class="fixed inset-0 bg-black/50 z-50 hidden overflow-y-auto p-4">
         <div class="bg-white rounded-2xl max-w-2xl mx-auto my-8 p-5">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-xl font-bold"><i class="fas fa-tasks"></i> Nueva orden de servicio</h3>
-                <button id="closeModalBtn" class="text-slate-400"><i class="fas fa-times"></i></button>
-            </div>
+            <div class="flex justify-between items-center mb-4"><h3 class="text-xl font-bold"><i class="fas fa-tasks"></i> Nueva orden de servicio</h3><button id="closeModalBtn" class="text-slate-400"><i class="fas fa-times"></i></button></div>
             <div class="space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                        <label class="text-sm font-medium">Cliente *</label>
-                        <select id="clientSelect" class="w-full border rounded-xl px-3 py-2"></select>
-                        <button type="button" id="quickAddClient" class="text-xs text-blue-600 mt-1">+ Nuevo cliente</button>
-                    </div>
-                    <div><label class="text-sm font-medium">DNI *</label><input type="text" id="clientDni" placeholder="DNI / NIF" class="w-full border rounded-xl px-3 py-2"></div>
-                    <div><label class="text-sm font-medium">Teléfono *</label><input type="tel" id="clientPhone" placeholder="Teléfono" class="w-full border rounded-xl px-3 py-2"></div>
-                    <div><label class="text-sm font-medium">Ubicación/Dirección</label><input type="text" id="clientLocation" placeholder="Dirección, localidad" class="w-full border rounded-xl px-3 py-2"></div>
+                    <div><label class="text-sm font-medium">Cliente *</label><select id="clientSelect" class="w-full border rounded-xl px-3 py-2"></select><button type="button" id="quickAddClient" class="text-xs text-blue-600 mt-1">+ Nuevo cliente</button></div>
+                    <div><label class="text-sm font-medium">DNI *</label><input type="text" id="clientDni" class="w-full border rounded-xl px-3 py-2"></div>
+                    <div><label class="text-sm font-medium">Teléfono *</label><input type="tel" id="clientPhone" class="w-full border rounded-xl px-3 py-2"></div>
+                    <div><label class="text-sm font-medium">Ubicación/Dirección</label><input type="text" id="clientLocation" class="w-full border rounded-xl px-3 py-2"></div>
                 </div>
-                <div>
-                    <label class="text-sm font-medium">Técnicos asignados *</label>
-                    <div id="workersChecklist" class="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded-lg"></div>
-                </div>
+                <div><label class="text-sm font-medium">Técnicos asignados *</label><div id="workersChecklist" class="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded-lg"></div></div>
                 <div><label class="text-sm font-medium">📋 Servicio solicitado *</label><textarea id="requestedService" rows="2" class="w-full border rounded-xl px-3 py-2"></textarea></div>
                 <div><label class="text-sm font-medium">✅ Trabajo realizado *</label><textarea id="performedWork" rows="2" class="w-full border rounded-xl px-3 py-2"></textarea></div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div><label>Inicio *</label><input type="datetime-local" id="startDatetime" class="w-full border rounded-xl"></div>
-                    <div><label>Término *</label><input type="datetime-local" id="endDatetime" class="w-full border rounded-xl"></div>
-                </div>
-                <div>
-                    <label>Estado</label>
-                    <select id="orderStatus" class="w-full border rounded-xl">
-                        <option value="pending">🟡 Pendiente</option>
-                        <option value="in_progress">🔵 En proceso</option>
-                        <option value="completed">✅ Finalizado</option>
-                    </select>
-                </div>
-                <div>
-                    <div class="flex justify-between"><span>📦 Productos / Materiales</span><button id="addProductBtn" type="button" class="text-xs bg-slate-100 px-2 py-1 rounded-full">+ Agregar</button></div>
-                    <div id="productsContainer" class="space-y-2 mt-2"></div>
-                    <div class="text-right font-semibold mt-1">Total materiales: <span id="totalMaterialsSpan">$0.00</span></div>
-                </div>
-                <div>
-                    <label>✍️ Firma del cliente *</label>
-                    <canvas id="signatureCanvas" class="signature-canvas"></canvas>
-                    <button id="clearSignature" class="text-xs text-red-500 mt-1">Limpiar firma</button>
-                </div>
-                <button id="saveOrderBtn" class="w-full bg-amber-600 text-white py-3 rounded-xl font-bold">Guardar orden (offline)</button>
+                <div class="grid grid-cols-2 gap-3"><div><label>Inicio *</label><input type="datetime-local" id="startDatetime" class="w-full border rounded-xl"></div><div><label>Término *</label><input type="datetime-local" id="endDatetime" class="w-full border rounded-xl"></div></div>
+                <div><label>Estado</label><select id="orderStatus" class="w-full border rounded-xl"><option value="pending">🟡 Pendiente</option><option value="in_progress">🔵 En proceso</option><option value="completed">✅ Finalizado</option></select></div>
+                <div><div class="flex justify-between"><span>📦 Productos / Materiales</span><button id="addProductBtn" type="button" class="text-xs bg-slate-100 px-2 py-1 rounded-full">+ Agregar</button></div><div id="productsContainer" class="space-y-2 mt-2"></div><div class="text-right font-semibold mt-1">Total materiales: <span id="totalMaterialsSpan">$0.00</span></div></div>
+                <div><label>✍️ Firma del cliente *</label><canvas id="signatureCanvas" class="signature-canvas"></canvas><button id="clearSignature" class="text-xs text-red-500 mt-1">Limpiar firma</button></div>
+                <button id="saveOrderBtn" class="w-full bg-amber-600 text-white py-3 rounded-xl font-bold">Guardar orden (local)</button>
             </div>
         </div>
     </div>
@@ -122,61 +89,32 @@
         <div class="pdf-modal w-full max-w-3xl bg-white rounded-2xl shadow-2xl relative print-area">
             <div class="sticky top-0 bg-white rounded-t-2xl p-4 border-b flex justify-between items-center no-print">
                 <h3 class="text-lg font-bold"><i class="fas fa-file-pdf text-red-500"></i> Detalle de orden</h3>
-                <div class="flex gap-2">
-                    <button id="printPdfBtn" class="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-lg text-sm"><i class="fas fa-print"></i> Imprimir / PDF</button>
-                    <button id="closePdfModal" class="text-slate-400"><i class="fas fa-times text-xl"></i></button>
-                </div>
+                <div class="flex gap-2"><button id="printPdfBtn" class="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-lg text-sm"><i class="fas fa-print"></i> Imprimir / PDF</button><button id="closePdfModal" class="text-slate-400"><i class="fas fa-times text-xl"></i></button></div>
             </div>
             <div id="pdfContent" class="p-6 space-y-4 text-sm"></div>
         </div>
     </div>
 
-    <!-- MODAL GESTIÓN CLIENTES -->
-    <div id="clientsModalLib" class="fixed inset-0 bg-black/40 z-40 hidden items-center justify-center p-4">
-        <div class="bg-white rounded-2xl w-full max-w-md p-4">
-            <h3 class="font-bold text-lg mb-2">Clientes registrados</h3>
-            <div id="clientListModal" class="max-h-60 overflow-y-auto space-y-2 mb-3"></div>
-            <input type="text" id="newClientNameModal" placeholder="Nombre" class="border p-2 rounded w-full mb-1">
-            <input type="text" id="newClientDniModal" placeholder="DNI" class="border p-2 rounded w-full mb-1">
-            <input type="text" id="newClientPhoneModal" placeholder="Teléfono" class="border p-2 rounded w-full">
-            <button id="saveClientModalBtn" class="bg-blue-600 text-white w-full py-2 rounded-xl mt-2">Agregar cliente</button>
-            <button id="closeClientsModalLib" class="mt-2 text-slate-500 w-full">Cerrar</button>
-        </div>
-    </div>
+    <!-- MODAL CLIENTES -->
+    <div id="clientsModalLib" class="fixed inset-0 bg-black/40 z-40 hidden items-center justify-center p-4"><div class="bg-white rounded-2xl w-full max-w-md p-4"><h3 class="font-bold text-lg mb-2">Clientes registrados</h3><div id="clientListModal" class="max-h-60 overflow-y-auto space-y-2 mb-3"></div><input type="text" id="newClientNameModal" placeholder="Nombre" class="border p-2 rounded w-full mb-1"><input type="text" id="newClientDniModal" placeholder="DNI" class="border p-2 rounded w-full mb-1"><input type="text" id="newClientPhoneModal" placeholder="Teléfono" class="border p-2 rounded w-full"><button id="saveClientModalBtn" class="bg-blue-600 text-white w-full py-2 rounded-xl mt-2">Agregar cliente</button><button id="closeClientsModalLib" class="mt-2 text-slate-500 w-full">Cerrar</button></div></div>
 
-    <!-- MODAL GESTIÓN TÉCNICOS CON PERFILES -->
-    <div id="workersModalLib" class="fixed inset-0 bg-black/40 z-40 hidden items-center justify-center p-4">
-        <div class="bg-white rounded-2xl w-full max-w-md p-4">
-            <h3 class="font-bold text-lg mb-2">Técnicos / Trabajadores</h3>
-            <div id="workersListModal" class="max-h-60 overflow-y-auto space-y-2 mb-3"></div>
-            <input type="text" id="newWorkerNameModal" placeholder="Nombre del técnico" class="border p-2 rounded w-full mb-2">
-            <button id="saveWorkerModalBtn" class="bg-blue-600 text-white w-full py-2 rounded-xl">Agregar técnico</button>
-            <button id="closeWorkersModalLib" class="mt-2 text-slate-500 w-full">Cerrar</button>
-        </div>
-    </div>
+    <!-- MODAL TÉCNICOS -->
+    <div id="workersModalLib" class="fixed inset-0 bg-black/40 z-40 hidden items-center justify-center p-4"><div class="bg-white rounded-2xl w-full max-w-md p-4"><h3 class="font-bold text-lg mb-2">Técnicos / Trabajadores</h3><div id="workersListModal" class="max-h-60 overflow-y-auto space-y-2 mb-3"></div><input type="text" id="newWorkerNameModal" placeholder="Nombre del técnico" class="border p-2 rounded w-full mb-2"><button id="saveWorkerModalBtn" class="bg-blue-600 text-white w-full py-2 rounded-xl">Agregar técnico</button><button id="closeWorkersModalLib" class="mt-2 text-slate-500 w-full">Cerrar</button></div></div>
 
-    <!-- MODAL PERFIL DE TRABAJADOR -->
+    <!-- MODAL PERFIL TRABAJADOR -->
     <div id="workerProfileModal" class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-4 overflow-y-auto">
         <div class="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-            <div class="sticky top-0 bg-white p-4 border-b flex justify-between items-center">
-                <h3 class="text-xl font-bold"><i class="fas fa-user-circle"></i> Perfil de <span id="profileWorkerName"></span></h3>
-                <button id="closeProfileModal" class="text-slate-400"><i class="fas fa-times"></i></button>
-            </div>
+            <div class="sticky top-0 bg-white p-4 border-b flex justify-between items-center"><h3 class="text-xl font-bold"><i class="fas fa-user-circle"></i> Perfil de <span id="profileWorkerName"></span></h3><button id="closeProfileModal" class="text-slate-400"><i class="fas fa-times"></i></button></div>
             <div class="p-5">
-                <div class="mb-4 flex flex-wrap gap-2 items-center">
-                    <label class="text-sm font-medium">Filtrar por fecha:</label>
-                    <input type="date" id="profileStartDate" class="border rounded-lg px-2 py-1 text-sm">
-                    <span>a</span>
-                    <input type="date" id="profileEndDate" class="border rounded-lg px-2 py-1 text-sm">
-                    <button id="applyProfileFilter" class="bg-slate-200 px-3 py-1 rounded-lg text-sm">Filtrar</button>
-                    <button id="clearProfileFilter" class="text-blue-600 text-sm">Limpiar</button>
-                </div>
+                <div class="mb-4 flex flex-wrap gap-2 items-center"><label class="text-sm font-medium">Filtrar por fecha:</label><input type="date" id="profileStartDate" class="border rounded-lg px-2 py-1 text-sm"><span>a</span><input type="date" id="profileEndDate" class="border rounded-lg px-2 py-1 text-sm"><button id="applyProfileFilter" class="bg-slate-200 px-3 py-1 rounded-lg text-sm">Filtrar</button><button id="clearProfileFilter" class="text-blue-600 text-sm">Limpiar</button></div>
                 <div id="profileOrdersList" class="space-y-3 max-h-96 overflow-y-auto"></div>
                 <div id="profileStats" class="mt-4 p-3 bg-slate-50 rounded-lg text-sm font-semibold"></div>
             </div>
         </div>
     </div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="app.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/idb@8.0.0/build/umd.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
